@@ -1,0 +1,39 @@
+# ══════════════════════════════════════════════════════════════
+# MENACRAFT TRUSTCHECK — Dependencies (Backend API)
+# ══════════════════════════════════════════════════════════════
+
+# --- API Framework ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+
+# --- Outbound API Calls (Groq, DeepSeek, OpenRouter, HF, Google, OSM) ---
+requests>=2.31.0
+
+# --- Computer Vision ---
+opencv-python>=4.9.0
+Pillow>=10.2.0
+
+# --- PDF Report Generation ---
+fpdf2>=2.7.8
+
+# --- Visualization ---
+matplotlib>=3.8.0
+
+# --- QR Code Generation ---
+qrcode[pil]>=7.4
+
+# --- EXIF Metadata Extraction ---
+piexif>=1.1.3
+
+# --- Audio Forensics ---
+librosa>=0.10.1
+soundfile>=0.12.1
+audioread>=3.0.1
+pydub>=0.25.1
+
+# --- Utilities ---
+numpy>=1.26.0
+python-dotenv>=1.0.0
+supabase>=2.4.0
+httpx>=0.27.0

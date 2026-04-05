@@ -1,0 +1,24 @@
+﻿============================================================
+
+[HF] Testing HuggingFace...
+  umm-maybe/AI-image-detector: HTTP 410 -> <!doctype html>
+<html class="">
+	<head>
+		<meta charset="utf-8" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scala
+  Organika/sdxl-detector: HTTP 410 -> <!doctype html>
+<html class="">
+	<head>
+		<meta charset="utf-8" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scala
+
+[OR] Testing OpenRouter Vision...
+  meta-llama/llama-3.2-11b-vision-instruct:free: HTTP 404 -> {"error":{"message":"No endpoints found for meta-llama/llama-3.2-11b-vision-instruct:free.","code":404},"user_id":"user_3BuRn31HYch9b2mmsAMT2f4vkvK"}
+  qwen/qwen2.5-vl-7b-instruct:free: HTTP 400 -> {"error":{"message":"qwen/qwen2.5-vl-7b-instruct:free is not a valid model ID","code":400},"user_id":"user_3BuRn31HYch9b2mmsAMT2f4vkvK"}
+
+[GROQ] Testing Groq text...
+  HTTP 200 -> {"id":"chatcmpl-994fe676-7bb6-44c7-8038-8470fc54a7ff","object":"chat.completion","created":1775344671,"model":"llama-3.3-70b-versatile","choices":[{"i
+
+============================================================

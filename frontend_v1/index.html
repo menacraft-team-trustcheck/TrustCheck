@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MenaCraft TrustCheck — OSINT Verification Platform</title>
+    <meta name="description" content="Combat digital misinformation with AI-powered OSINT verification across 3 axes: Authenticity, Context, Credibility">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+    <!-- ═══════════════ BACKGROUND EFFECTS ═══════════════ -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow--1"></div>
+    <div class="bg-glow bg-glow--2"></div>
+
+    <!-- ═══════════════ SIDEBAR ═══════════════ -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar__brand">
+            <div class="sidebar__logo">🛡️</div>
+            <div>
+                <h1 class="sidebar__title">TrustCheck</h1>
+                <p class="sidebar__subtitle">OSINT Platform v2.0</p>
+            </div>
+        </div>
+
+        <nav class="sidebar__nav">
+            <button class="nav-btn active" data-tab="image" id="nav-image">
+                <span class="nav-btn__icon">🖼️</span>
+                <span>Image Analysis</span>
+            </button>
+            <button class="nav-btn" data-tab="video" id="nav-video">
+                <span class="nav-btn__icon">📹</span>
+                <span>Video Analysis</span>
+            </button>
+            <button class="nav-btn" data-tab="audio" id="nav-audio">
+                <span class="nav-btn__icon">🔊</span>
+                <span>Audio Analysis</span>
+            </button>
+            <button class="nav-btn" data-tab="batch" id="nav-batch">
+                <span class="nav-btn__icon">🗂️</span>
+                <span>Batch Processing</span>
+            </button>
+        </nav>
+
+        <div class="sidebar__divider"></div>
+
+        <div class="sidebar__section">
+            <h3 class="sidebar__section-title">📡 Provider Status</h3>
+            <div id="provider-status">
+                <div class="provider-pill loading">
+                    <span class="provider-dot"></span>
+                    <span>Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="sidebar__footer">
+            <div class="sidebar__footer-badge">Zero Anthropic Dependencies</div>
+            <p class="sidebar__footer-text">Hackathon Build 2026</p>
+        </div>
+    </aside>
+
+    <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+    <main class="main">
+        <!-- Header -->
+        <header class="header">
+            <div>
+                <h2 class="header__title">
+                    <span class="header__title-gradient">Digital Content Verification</span>
+                </h2>
+                <p class="header__desc">Combat misinformation across <strong>Authenticity</strong> · <strong>Context</strong> · <strong>Credibility</strong></p>
+            </div>
+            <div class="header__actions">
+                <div class="pulse-dot" id="api-pulse"></div>
+                <span class="header__status" id="api-status-text">Checking API...</span>
+            </div>
+        </header>
+
+        <!-- ═══════ TAB: IMAGE ANALYSIS ═══════ -->
+        <section class="tab-panel active" id="panel-image">
+            <div class="upload-section">
+                <div class="upload-grid">
+                    <!-- Upload Zone -->
+                    <div class="upload-zone" id="image-drop-zone">
+                        <div class="upload-zone__inner">
+                            <div class="upload-zone__icon">📸</div>
+                            <h3 class="upload-zone__title">Drop image here</h3>
+                            <p class="upload-zone__text">or click to browse · JPG, PNG, WebP</p>
+                            <input type="file" id="image-input" accept="image/*" hidden>
+                        </div>
+                        <div class="upload-zone__preview" id="image-preview" style="display:none;">
+                            <img id="image-preview-img" alt="Preview">
+                            <button class="btn-remove" id="image-remove" title="Remove">✕</button>
+                        </div>
+                    </div>
+
+                    <!-- Context Fields -->
+                    <div class="context-fields">
+                        <div class="field-group">
+                            <label class="field-label">📝 Claim / Caption to Verify</label>
+                            <textarea class="field-input field-textarea" id="image-claim" placeholder="e.g. 'This photo shows flooding in Tunis on March 2024'"></textarea>
+                        </div>
+                        <div class="field-row">
+                            <div class="field-group">
+                                <label class="field-label">👤 Source / Author</label>
+                                <input class="field-input" id="image-source" placeholder="e.g. @user123">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">🔗 Source URL</label>
+                                <input class="field-input" id="image-url" placeholder="https://...">
+                            </div>
+                        </div>
+                        <div class="field-group">
+                            <label class="field-label">📍 Claimed Location</label>
+                            <input class="field-input" id="image-location" placeholder="e.g. Tunis, Tunisia">
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn-primary" id="btn-analyze-image" disabled>
+                    <span class="btn-primary__icon">🔍</span>
+                    <span>Run Full Analysis</span>
+                    <span class="btn-primary__shine"></span>
+                </button>
+            </div>
+
+            <!-- Progress -->
+            <div class="progress-section" id="image-progress" style="display:none;">
+                <div class="progress-bar">
+                    <div class="progress-bar__fill" id="image-progress-fill"></div>
+                </div>
+                <p class="progress-text" id="image-progress-text">Initializing analysis...</p>
+            </div>
+
+            <!-- Results -->
+            <div class="results-section" id="image-results" style="display:none;"></div>
+        </section>
+
+        <!-- ═══════ TAB: VIDEO ANALYSIS ═══════ -->
+        <section class="tab-panel" id="panel-video">
+            <div class="upload-section">
+                <div class="upload-zone" id="video-drop-zone">
+                    <div class="upload-zone__inner">
+                        <div class="upload-zone__icon">🎬</div>
+                        <h3 class="upload-zone__title">Drop video here</h3>
+                        <p class="upload-zone__text">or click to browse · MP4, AVI, MOV, WebM</p>
+                        <input type="file" id="video-input" accept="video/*" hidden>
+                    </div>
+                    <div class="upload-zone__preview" id="video-preview" style="display:none;">
+                        <video id="video-preview-el" controls style="width:100%;border-radius:8px;"></video>
+                        <button class="btn-remove" id="video-remove" title="Remove">✕</button>
+                    </div>
+                </div>
+
+                <div class="field-group" style="margin-top:1rem;">
+                    <label class="field-label">⏱️ Frame Sampling Interval</label>
+                    <div class="slider-row">
+                        <input type="range" class="slider" id="video-interval" min="1" max="10" step="0.5" value="2">
+                        <span class="slider-value" id="video-interval-value">2.0s</span>
+                    </div>
+                </div>
+
+                <button class="btn-primary" id="btn-analyze-video" disabled>
+                    <span class="btn-primary__icon">🔍</span>
+                    <span>Analyze Video</span>
+                    <span class="btn-primary__shine"></span>
+                </button>
+            </div>
+
+            <div class="progress-section" id="video-progress" style="display:none;">
+                <div class="progress-bar"><div class="progress-bar__fill" id="video-progress-fill"></div></div>
+                <p class="progress-text" id="video-progress-text">Extracting frames...</p>
+            </div>
+
+            <div class="results-section" id="video-results" style="display:none;"></div>
+        </section>
+
+        <!-- ═══════ TAB: AUDIO ANALYSIS ═══════ -->
+        <section class="tab-panel" id="panel-audio">
+            <div class="upload-section">
+                <div class="upload-zone" id="audio-drop-zone">
+                    <div class="upload-zone__inner">
+                        <div class="upload-zone__icon">🎙️</div>
+                        <h3 class="upload-zone__title">Drop audio here</h3>
+                        <p class="upload-zone__text">or click to browse · MP3, WAV, OGG, M4A</p>
+                        <input type="file" id="audio-input" accept="audio/*" hidden>
+                    </div>
+                    <div class="upload-zone__preview" id="audio-preview" style="display:none;">
+                        <audio id="audio-preview-el" controls style="width:100%;margin-bottom:1rem;"></audio>
+                        <button class="btn-remove" id="audio-remove" title="Remove">✕</button>
+                    </div>
+                </div>
+
+                <div class="field-group" style="margin-top:1.5rem;">
+                    <label class="field-label">🎯 Analysis Objective</label>
+                    <p style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.5rem;">Detecting synthetic vocal tracts and anomalous pitch signatures (TTS vs Human).</p>
+                </div>
+
+                <button class="btn-primary" id="btn-analyze-audio" disabled>
+                    <span class="btn-primary__icon">🧪</span>
+                    <span>Analyze Voice</span>
+                    <span class="btn-primary__shine"></span>
+                </button>
+            </div>
+
+            <div class="progress-section" id="audio-progress" style="display:none;">
+                <div class="progress-bar"><div class="progress-bar__fill" id="audio-progress-fill"></div></div>
+                <p class="progress-text" id="audio-progress-text">Extracting acoustic fingerprints...</p>
+            </div>
+
+            <div class="results-section" id="audio-results" style="display:none;"></div>
+        </section>
+
+        <!-- ═══════ TAB: BATCH PROCESSING ═══════ -->
+        <section class="tab-panel" id="panel-batch">
+            <div class="upload-section">
+                <div class="upload-zone" id="batch-drop-zone">
+                    <div class="upload-zone__inner">
+                        <div class="upload-zone__icon">📁</div>
+                        <h3 class="upload-zone__title">Drop multiple images here</h3>
+                        <p class="upload-zone__text">or click to browse · Select multiple files</p>
+                        <input type="file" id="batch-input" accept="image/*" multiple hidden>
+                    </div>
+                    <div class="upload-zone__file-list" id="batch-file-list" style="display:none;"></div>
+                </div>
+
+                <div class="field-group" style="margin-top:1rem;">
+                    <label class="field-label">📝 Common Claim (applied to all images)</label>
+                    <textarea class="field-input field-textarea" id="batch-claim" placeholder="Optional: common claim for all images"></textarea>
+                </div>
+
+                <button class="btn-primary" id="btn-analyze-batch" disabled>
+                    <span class="btn-primary__icon">🗂️</span>
+                    <span>Run Batch Analysis</span>
+                    <span class="btn-primary__shine"></span>
+                </button>
+            </div>
+
+            <div class="progress-section" id="batch-progress" style="display:none;">
+                <div class="progress-bar"><div class="progress-bar__fill" id="batch-progress-fill"></div></div>
+                <p class="progress-text" id="batch-progress-text">Processing batch...</p>
+            </div>
+
+            <div class="results-section" id="batch-results" style="display:none;"></div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

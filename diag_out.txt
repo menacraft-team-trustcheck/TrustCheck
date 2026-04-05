@@ -1,0 +1,18 @@
+HF|umm-maybe/AI-image-detector|410|<!doctype html>
+<html class="">
+	<head>
+		<meta charset="utf-8" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+
+		<meta name="description" content="We
+HF|Organika/sdxl-detector|410|<!doctype html>
+<html class="">
+	<head>
+		<meta charset="utf-8" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+
+		<meta name="description" content="We
+OR|meta-llama/llama-3.2-11b-vision-instruct:free|404|{"error":{"message":"No endpoints found for meta-llama/llama-3.2-11b-vision-instruct:free.","code":404},"user_id":"user_3BuRn31HYch9b2mmsAMT2f4vkvK"}
+OR|qwen/qwen2.5-vl-7b-instruct:free|400|{"error":{"message":"qwen/qwen2.5-vl-7b-instruct:free is not a valid model ID","code":400},"user_id":"user_3BuRn31HYch9b2mmsAMT2f4vkvK"}

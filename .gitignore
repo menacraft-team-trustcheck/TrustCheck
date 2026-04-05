@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.env
+
+# Node.js
+node_modules/
+.next/
+out/
+build/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OSINT Data
+temp_audio/
+temp_video/
+frames/
+*.png
+*.jpg
+*.jpeg
+*.mp3
+*.wav
+*.mp4
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
