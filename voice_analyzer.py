@@ -433,3 +433,20 @@ def analyze_voice(audio_bytes: bytes, original_filename: str = "audio.tmp") -> D
         }
     except Exception as e:
         return {"verdict": "error", "details": str(e), "ai_score": 0.0, "flags": [], "evidence": [], "features": {}}
+
+
+def preload_models() -> None:
+    """Pre-load optional heavy audio models (Pyannote, Resemblyzer).
+
+    Call this from the FastAPI startup event to avoid cold-start latency
+    on the first audio request.
+    """
+    try:
+        _get_pyannote_vad()
+    except Exception:
+        pass
+
+    try:
+        _get_voice_encoder()
+    except Exception:
+        pass

@@ -65,49 +65,55 @@ Output MUST be EXACTLY this JSON:
 def analyze_image_authenticity(image_bytes: bytes) -> Dict[str, Any]:
     """
     Run AI-generated image detection via OpenRouter Vision LLM.
-
     Falls back to Groq/DeepSeek text-based heuristic if vision fails.
-
-    Returns:
-        dict with keys: verdict, confidence, details, model_used, sha256
     """
     sha256 = compute_file_hash(image_bytes)
-    result = {
-        "verdict": "inconclusive",
-        "confidence": 0.0,
-        "details": "",
-        "model_used": "none",
-        "sha256": sha256,
-    }
+    try:
+        result = {
+            "verdict": "inconclusive",
+            "confidence": 0.0,
+            "details": "",
+            "model_used": "none",
+            "sha256": sha256,
+        }
 
-    # ── Try Vision LLM for forensic analysis ─────────────────
-    logger.info("Running authenticity check via Vision LLM...")
-    image_b64 = encode_image_to_base64(image_bytes)
-    vision_result = route_vision(FORENSIC_PROMPT, image_b64)
+        # ── Try Vision LLM for forensic analysis ─────────────────
+        logger.info("Running authenticity check via Vision LLM...")
+        image_b64 = encode_image_to_base64(image_bytes)
+        vision_result = route_vision(FORENSIC_PROMPT, image_b64)
 
-    if vision_result and not (isinstance(vision_result, str) and vision_result.startswith("[ERROR]")):
-        parsed = _parse_vision_response(vision_result, sha256)
-        if parsed:
-            return parsed
+        if vision_result and not (isinstance(vision_result, str) and vision_result.startswith("[ERROR]")):
+            parsed = _parse_vision_response(vision_result, sha256)
+            if parsed:
+                return parsed
 
-    # ── Fallback: Text LLM general assessment ────────────────
-    logger.info("Vision failed, falling back to text LLM...")
-    fallback_prompt = (
-        "You are a digital forensics expert. A user uploaded an image for analysis "
-        "but we couldn't run vision-based detection. Based on general knowledge, "
-        "what advice would you give for manually checking if an image is AI-generated? "
-        "Reply with a brief 2-3 sentence practical guide."
-    )
-    fallback_result = route_text(fallback_prompt)
+        # ── Fallback: Text LLM general assessment ────────────────
+        logger.info("Vision failed, falling back to text LLM...")
+        fallback_prompt = (
+            "You are a digital forensics expert. A user uploaded an image for analysis "
+            "but we couldn't run vision-based detection. Based on general knowledge, "
+            "what advice would you give for manually checking if an image is AI-generated? "
+            "Reply with a brief 2-3 sentence practical guide."
+        )
+        fallback_result = route_text(fallback_prompt)
 
-    result["details"] = (
-        f"Vision-based detection was unavailable. "
-        f"Manual verification recommended. {fallback_result}"
-        if isinstance(fallback_result, str) and not fallback_result.startswith("[ERROR]")
-        else "Automated detection unavailable. Please verify the image manually using reverse image search and metadata analysis."
-    )
-    result["model_used"] = "fallback_llm"
-    return result
+        result["details"] = (
+            f"Vision-based detection was unavailable. "
+            f"Manual verification recommended. {fallback_result}"
+            if isinstance(fallback_result, str) and not fallback_result.startswith("[ERROR]")
+            else "Automated detection unavailable. Please verify the image manually using reverse image search and metadata analysis."
+        )
+        result["model_used"] = "fallback_llm"
+        return result
+    except Exception as e:
+        logger.error(f"Authenticity pipeline crashed: {e}")
+        return {
+            "verdict": "inconclusive",
+            "confidence": 0.0,
+            "details": f"Forensic engine internal error: {str(e)}",
+            "model_used": "none",
+            "sha256": sha256,
+        }
 
 
 def _parse_vision_response(response: str, sha256: str) -> Dict[str, Any] | None:

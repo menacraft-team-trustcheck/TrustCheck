@@ -32,8 +32,10 @@ import logging
 import base64
 import hashlib
 import datetime
+import asyncio
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import Response, JSONResponse, HTMLResponse, RedirectResponse
@@ -58,6 +60,7 @@ from geolocation import analyze_geolocation
 from credibility import analyze_credibility
 from heatmap import generate_heatmap
 from voice_analyzer import analyze_voice
+import voice_analyzer as voice_analyzer_module
 from certificate import generate_certificate
 from database import (
     is_connected as db_connected,
@@ -74,6 +77,53 @@ app = FastAPI(
     description="OSINT content verification across 3 axes: Authenticity, Context, Credibility",
     version="2.0.0",
 )
+
+
+# Create a shared ThreadPoolExecutor for blocking work (models, network calls)
+@app.on_event("startup")
+async def _startup():
+    loop = asyncio.get_running_loop()
+    # Create a modest-sized executor to avoid creating many threads per-request
+    executor = ThreadPoolExecutor(max_workers=8)
+    app.state.executor = executor
+
+    # Pre-load heavy audio models in background to avoid cold-start on first request
+    try:
+        await loop.run_in_executor(app.state.executor, getattr, voice_analyzer_module, "preload_models")
+        # Actually call the preload function if present
+        preload = getattr(voice_analyzer_module, "preload_models", None)
+        if callable(preload):
+            await loop.run_in_executor(app.state.executor, preload)
+            logger.info("Preloaded optional audio models (pyannote/resemblyzer)")
+    except Exception as e:
+        logger.debug(f"Preload models failed: {e}")
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    try:
+        execr = getattr(app.state, "executor", None)
+        if execr:
+            execr.shutdown(wait=False)
+    except Exception:
+        pass
+
+# Simple in-memory cache for expensive per-file results
+_analysis_cache: dict = {}
+_cache_ttl_seconds = 300
+
+def _cache_get(key: str):
+    item = _analysis_cache.get(key)
+    if not item: return None
+    ts, value = item
+    if (datetime.datetime.now() - ts).total_seconds() > _cache_ttl_seconds:
+        try: del _analysis_cache[key]
+        except: pass
+        return None
+    return value
+
+def _cache_set(key: str, value: dict):
+    _analysis_cache[key] = (datetime.datetime.now(), value)
 
 # CORS — allow your frontend (Figma export / local dev) to call the API
 app.add_middleware(
@@ -289,7 +339,8 @@ REPORT SUMMARY:
 async def endpoint_authenticity(image: UploadFile = File(...)):
     """Detect AI-generated or manipulated images via HuggingFace models."""
     image_bytes = await image.read()
-    result = analyze_image_authenticity(image_bytes)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_image_authenticity, image_bytes)
     result["filename"] = image.filename
     return result
 
@@ -307,7 +358,8 @@ async def endpoint_context(
     if not claim.strip():
         raise HTTPException(400, "A 'claim' text is required for context analysis.")
     image_bytes = await image.read()
-    result = analyze_context(image_bytes, claim)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_context, image_bytes, claim)
     result["filename"] = image.filename
     return result
 
@@ -319,7 +371,8 @@ async def endpoint_context(
 @app.post("/analyze/fact-check")
 async def endpoint_fact_check(claim: str = Form(...)):
     """Google Fact Check API + LLM reasoning fallback."""
-    result = fact_check_claim(claim)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), fact_check_claim, claim)
     return result
 
 
@@ -334,7 +387,8 @@ async def endpoint_geolocation(
 ):
     """Extract EXIF GPS + reverse geocode + compare with claimed location."""
     image_bytes = await image.read()
-    result = analyze_geolocation(image_bytes, claimed_location)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_geolocation, image_bytes, claimed_location)
     return result
 
 
@@ -351,7 +405,8 @@ async def endpoint_credibility(
     """Assess source/author credibility via Groq/DeepSeek text analysis."""
     if not any([source_name.strip(), claim_text.strip(), source_url.strip()]):
         raise HTTPException(400, "At least one of source_name, claim_text, or source_url is required.")
-    result = analyze_credibility(source_name, claim_text, source_url)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_credibility, source_name, claim_text, source_url)
     return result
 
 
@@ -363,7 +418,8 @@ async def endpoint_credibility(
 async def endpoint_heatmap(image: UploadFile = File(...)):
     """Generate a manipulation-likelihood heatmap overlay image."""
     image_bytes = await image.read()
-    result = generate_heatmap(image_bytes)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), generate_heatmap, image_bytes)
 
     # Return heatmap as base64-encoded PNG plus metadata
     heatmap_b64 = ""
@@ -389,88 +445,145 @@ async def endpoint_full_image(
     source_name: str = Form(""),
     source_url: str = Form(""),
     claimed_location: str = Form(""),
+    fast: bool = Form(False),
 ):
-    """
-    Run the FULL TrustCheck pipeline — all 5 axes in PARALLEL:
-      Axis A  — AI detection (Vision LLM)
-      ELA     — Error Level Analysis heatmap (local, zero API cost)
-      Axis B1 — Contextual consistency (Vision LLM)
-      Axis B2 — Fact-check plausibility (Google + LLM)
-      Axis B3 — Geolocation (EXIF + OSM)
-      Axis C  — Source credibility (domain forensics + LLM)
+    """Async multi-axis pipeline — runs heavy work in a shared executor to avoid blocking the event loop."""
+    try:
+        image_bytes = await image.read()
+        file_hash = compute_file_hash(image_bytes)
 
-    Followed by weighted scoring + contradiction detection + synthesis.
-    Total latency ≈ slowest single axis (not sum of all).
-    """
-    image_bytes = await image.read()
-    file_hash   = compute_file_hash(image_bytes)
+        results = {"filename": image.filename, "sha256": file_hash}
 
-    results = {"filename": image.filename, "sha256": file_hash}
+        # Define closures for each axis (these run in executor)
+        def run_authenticity():
+            fh = compute_file_hash(image_bytes)
+            cached = _cache_get(f"auth::{fh}")
+            if cached is not None:
+                return ("authenticity", cached)
+            res = analyze_image_authenticity(image_bytes)
+            try: _cache_set(f"auth::{fh}", res)
+            except: pass
+            return ("authenticity", res)
 
-    # ── Define all independent tasks ──────────────────────────
-    def run_authenticity(): return ("authenticity",  analyze_image_authenticity(image_bytes))
-    def run_heatmap():      return ("_heatmap_raw",  generate_heatmap(image_bytes))
-    def run_geolocation():  return ("geolocation",   analyze_geolocation(image_bytes, claimed_location))
-    def run_context():
-        if claim.strip():
-            return ("context", analyze_context(image_bytes, claim))
-        return ("context", None)
-    def run_fact_check():
-        if claim.strip():
-            return ("fact_check", fact_check_claim(claim))
-        return ("fact_check", None)
-    def run_credibility():
-        if source_name.strip() or claim.strip():
-            return ("credibility", analyze_credibility(source_name, claim, source_url))
-        return ("credibility", None)
+        def run_heatmap():
+            fh = compute_file_hash(image_bytes)
+            cached = _cache_get(f"heatmap::{fh}")
+            if cached is not None:
+                return ("_heatmap_raw", cached)
+            res = generate_heatmap(image_bytes)
+            try: _cache_set(f"heatmap::{fh}", res)
+            except: pass
+            return ("_heatmap_raw", res)
 
-    tasks = [
-        run_authenticity, run_heatmap, run_geolocation,
-        run_context, run_fact_check, run_credibility,
-    ]
+        def run_geolocation():
+            return ("geolocation", analyze_geolocation(image_bytes, claimed_location))
 
-    # ── Execute ALL axes concurrently ─────────────────────────
-    logger.info(f"Launching {len(tasks)} parallel analysis axes...")
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(t): t.__name__ for t in tasks}
-        for future in as_completed(futures):
-            try:
-                key, value = future.result()
+        def run_context():
+            if claim.strip():
+                return ("context", analyze_context(image_bytes, claim))
+            return ("context", {})
+
+        def run_fact_check():
+            if claim.strip():
+                return ("fact_check", fact_check_claim(claim))
+            return ("fact_check", {})
+
+        def run_credibility():
+            if source_name.strip() or claim.strip():
+                return ("credibility", analyze_credibility(source_name, claim, source_url))
+            return ("credibility", {})
+
+        if fast:
+            tasks = [run_authenticity, run_heatmap]
+        else:
+            tasks = [run_authenticity, run_heatmap, run_geolocation, run_context, run_fact_check, run_credibility]
+
+        logger.info(f"Launching {len(tasks)} parallel analysis axes...")
+        import time
+        loop = asyncio.get_running_loop()
+        coros = []
+        
+        # We wrap the executor call to capture elapsed time
+        async def wrap_task(task_func):
+            t0 = time.time()
+            res = await loop.run_in_executor(getattr(app.state, "executor", None), task_func)
+            t1 = time.time()
+            return task_func.__name__, res, round(t1 - t0, 2)
+
+        for t in tasks:
+            coros.append(asyncio.wait_for(wrap_task(t), timeout=60))
+
+        completed = await asyncio.gather(*coros, return_exceptions=True)
+
+        task_timings = {}
+        for idx, outcome in enumerate(completed):
+            task_fn = tasks[idx]
+            task_name = getattr(task_fn, "__name__", f"task_{idx}").replace("run_", "")
+            if isinstance(outcome, Exception):
+                logger.warning(f"Task {task_name} failed or timed out: {outcome}")
+                results.setdefault("task_errors", {})[task_name] = str(outcome)
+                continue
+            
+            # Validate result shape (expecting a 3-tuple from our wrapper)
+            if not isinstance(outcome, (list, tuple)) or len(outcome) != 3:
+                logger.error(f"Unexpected task result shape from {task_name}: {repr(outcome)}")
+                results.setdefault("task_errors", {})[task_name] = f"unexpected_result: {repr(outcome)}"
+                continue
+            
+            _, res_tuple, elapsed = outcome
+            if isinstance(res_tuple, tuple) and len(res_tuple) == 2:
+                key, value = res_tuple
                 results[key] = value
-            except Exception as e:
-                logger.error(f"Axis {futures[future]} failed: {e}")
+                task_timings[key] = elapsed
+            else:
+                results.setdefault("task_errors", {})[task_name] = "invalid_inner_tuple"
+                
+        results["taskTimings"] = task_timings
 
-    # ── Unpack heatmap (bytes → base64 for JSON transport) ───
-    hm          = results.pop("_heatmap_raw", {})
-    heatmap_b64 = ""
-    if hm.get("heatmap_image_bytes"):
-        heatmap_b64 = base64.b64encode(hm["heatmap_image_bytes"]).decode("utf-8")
-    results["heatmap"] = {
-        "heatmap_image_base64": heatmap_b64,
-        "grid_scores":          hm.get("grid_scores"),
-        "overall_assessment":   hm.get("overall_assessment"),
-        "hotspots":             hm.get("hotspots"),
-        "ela_mean":             hm.get("ela_mean"),
-        "ela_max":              hm.get("ela_max"),
-        "method":               hm.get("method", "ela_local"),
-    }
+        # Unpack heatmap
+        hm = results.pop("_heatmap_raw", {})
+        heatmap_b64 = hm.get("heatmap_image_base64", "")
+        if not heatmap_b64 and hm.get("heatmap_image_bytes"):
+            heatmap_b64 = base64.b64encode(hm["heatmap_image_bytes"]).decode("utf-8")
 
-    # ── Weighted scoring + contradiction detection + synthesis ─
-    logger.info("Running weighted scoring and synthesis...")
-    results["synthesis"] = synthesize_results(
-        results.get("authenticity", {}),
-        results.get("context"),
-        results.get("fact_check"),
-        results.get("credibility"),
-        hm,
-    )
+        results["heatmap"] = {
+            "heatmap_image_base64": heatmap_b64,
+            "grid_scores": hm.get("grid_scores"),
+            "overall_assessment": hm.get("overall_assessment"),
+            "hotspots": hm.get("hotspots", []),
+            "ela_mean": hm.get("ela_mean", 0.0),
+            "ela_max": hm.get("ela_max", 0.0),
+            "method": hm.get("method", "ela_local"),
+        }
 
-    results["timestamp"] = datetime.datetime.utcnow().isoformat()
+        # Synthesis
+        results["synthesis"] = synthesize_results(
+            results.get("authenticity", {}),
+            results.get("context", {}),
+            results.get("fact_check", {}),
+            results.get("credibility", {}),
+            hm,
+        )
 
-    # ── Persist to Supabase ───────────────────────────────────
-    save_analysis(file_hash, image.filename or "unknown", "image", results)
+        results["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    return results
+        # Persist in background
+        try:
+            asyncio.ensure_future(loop.run_in_executor(getattr(app.state, "executor", None), save_analysis, file_hash, image.filename or "unknown", "image", results))
+        except Exception:
+            pass
+
+        # Flatten for frontend compatibility (matches expected AnalysisResult mapping)
+        top_level = results.get("synthesis", {})
+        results["verdict"] = top_level.get("verdict", "inconclusive")
+        results["ai_score"] = top_level.get("risk_score", 0.5)
+        results["reasoning"] = top_level.get("narrative", "Forensic synthesis complete. No specific narrative provided.")
+        results["interpretation"] = results["reasoning"] # Keep alias for backward compatibility
+
+        return results
+    except Exception as e:
+        logger.exception("Catastrophic image analysis failure")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -480,18 +593,26 @@ async def endpoint_full_image(
 @app.post("/analyze/voice")
 async def endpoint_voice(audio: UploadFile = File(...)):
     """Acoustic forensic analysis to detect AI-generated voice/speech."""
-    audio_bytes = await audio.read()
-    file_hash = compute_file_hash(audio_bytes)
+    try:
+        audio_bytes = await audio.read()
+        file_hash = compute_file_hash(audio_bytes)
 
-    logger.info(f"Running Voice Analysis for {audio.filename}...")
-    result = analyze_voice(audio_bytes, audio.filename or "audio.tmp")
-    result["filename"] = audio.filename
-    result["sha256"] = file_hash
+        logger.info(f"Running Voice Analysis for {audio.filename}...")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_voice, audio_bytes, audio.filename or "audio.tmp")
+        result["filename"] = audio.filename
+        result["sha256"] = file_hash
 
-    # ── Persist to Supabase ───────────────────────────────────
-    save_analysis(file_hash, audio.filename or "unknown", "audio", result)
+        # Persist in background
+        try:
+            asyncio.ensure_future(loop.run_in_executor(getattr(app.state, "executor", None), save_analysis, file_hash, audio.filename or "unknown", "audio", result))
+        except Exception as e:
+            logger.error(f"Persistence failed: {e}")
 
-    return result
+        return result
+    except Exception as e:
+        logger.exception("Voice analysis failure")
+        return JSONResponse(status_code=500, content={"error": f"Voice Analysis Failure: {str(e)}"})
 
 
 
@@ -506,7 +627,8 @@ async def endpoint_video(
 ):
     """Frame-by-frame video analysis with risk timeline."""
     video_bytes = await video.read()
-    result = analyze_video(video_bytes, interval_sec)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_video, video_bytes, interval_sec)
 
     # Convert timeline image to base64
     timeline_b64 = ""
@@ -533,8 +655,11 @@ async def endpoint_video(
         "suspicious_frames": suspicious,
     }
 
-    # ── Persist to Supabase ──────────────────────────────────
-    save_analysis(result.get("sha256", ""), video.filename or "unknown", "video", video_result)
+    # Persist in background
+    try:
+        asyncio.ensure_future(loop.run_in_executor(getattr(app.state, "executor", None), save_analysis, result.get("sha256", ""), video.filename or "unknown", "video", video_result))
+    except Exception:
+        pass
 
     return video_result
 
@@ -550,11 +675,21 @@ async def endpoint_batch(
 ):
     """Batch-analyze multiple images."""
     results = []
+    loop = asyncio.get_running_loop()
+    tasks = []
     for img in images:
         img_bytes = await img.read()
-        auth = analyze_image_authenticity(img_bytes)
-        ctx = analyze_context(img_bytes, claim) if claim.strip() else None
+        # schedule authenticity and context in executor
+        auth_coro = loop.run_in_executor(getattr(app.state, "executor", None), analyze_image_authenticity, img_bytes)
+        ctx_coro = None
+        if claim.strip():
+            ctx_coro = loop.run_in_executor(getattr(app.state, "executor", None), analyze_context, img_bytes, claim)
+        tasks.append((img, img_bytes, auth_coro, ctx_coro))
 
+    # await and collect
+    for img, img_bytes, auth_coro, ctx_coro in tasks:
+        auth = await auth_coro
+        ctx = await ctx_coro if ctx_coro is not None else None
         results.append({
             "filename": img.filename,
             "sha256": compute_file_hash(img_bytes),
@@ -584,39 +719,66 @@ async def endpoint_certificate(
     Run full analysis and return a downloadable PDF certificate.
     Content-Type: application/pdf
     """
-    image_bytes = await image.read()
-    file_hash = compute_file_hash(image_bytes)
+    try:
+        image_bytes = await image.read()
+        file_hash = compute_file_hash(image_bytes)
 
-    # Run all pipelines
-    auth = analyze_image_authenticity(image_bytes)
-    ctx = analyze_context(image_bytes, claim) if claim.strip() else None
-    fc = fact_check_claim(claim) if claim.strip() else None
-    geo = analyze_geolocation(image_bytes, claimed_location)
-    cred = (analyze_credibility(source_name, claim, source_url)
-            if source_name.strip() or claim.strip() else None)
-    hm = generate_heatmap(image_bytes)
+        # Run all pipelines safely
+        logger.info(f"Generating certificate for {image.filename}...")
+        
+        loop = asyncio.get_running_loop()
+        # Run heavy tasks in executor and gather
+        auth = None; ctx = None; fc = None; geo = None; cred = None; hm = None
+        try:
+            auth = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_image_authenticity, image_bytes)
+        except Exception:
+            auth = {"verdict": "inconclusive", "confidence": 0.5, "details": "Error in Axis A"}
 
-    pdf_bytes = generate_certificate(
-        file_hash=file_hash,
-        filename=image.filename or "uploaded_image",
-        authenticity_result=auth,
-        context_result=ctx,
-        fact_check_result=fc,
-        geo_result=geo,
-        credibility_result=cred,
-        heatmap_result=hm,
-    )
+        try:
+            ctx = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_context, image_bytes, claim) if claim.strip() else None
+        except Exception:
+            ctx = None
 
-    # ── Persist report to Supabase ────────────────────────────
-    save_report(file_hash, image.filename or "uploaded_image", pdf_bytes)
+        try:
+            fc = await loop.run_in_executor(getattr(app.state, "executor", None), fact_check_claim, claim) if claim.strip() else None
+        except Exception:
+            fc = None
 
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="TrustCheck_Report_{file_hash[:8]}.pdf"'
-        },
-    )
+        try:
+            geo = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_geolocation, image_bytes, claimed_location)
+        except Exception:
+            geo = {"verdict": "inconclusive", "has_gps": False}
+
+        try:
+            cred = await loop.run_in_executor(getattr(app.state, "executor", None), analyze_credibility, source_name, claim, source_url) if (source_name.strip() or claim.strip()) else None
+        except Exception:
+            cred = None
+
+        try:
+            hm = await loop.run_in_executor(getattr(app.state, "executor", None), generate_heatmap, image_bytes)
+        except Exception:
+            hm = {}
+
+        # Generate the PDF in executor (it's CPU-bound / blocking)
+        pdf_bytes = await loop.run_in_executor(getattr(app.state, "executor", None), generate_certificate,
+            file_hash, image.filename or "uploaded_image", auth, ctx, fc, geo, cred, hm)
+
+        # ── Persist report to Supabase ────────────────────────────
+        try:
+            asyncio.ensure_future(loop.run_in_executor(getattr(app.state, "executor", None), save_report, file_hash, image.filename or "uploaded_image", pdf_bytes))
+        except Exception as e:
+            logger.error(f"Supabase report storage failed: {e}")
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="TrustCheck_Report_{file_hash[:8]}.pdf"'
+            },
+        )
+    except Exception as e:
+        logger.exception("Catastrophic failure in certificate generation")
+        return Response(content=f"Forensic Engine Failure: {str(e)}", status_code=500)
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -31,8 +31,7 @@ librosa>=0.10.1
 soundfile>=0.12.1
 audioread>=3.0.1
 pydub>=0.25.1
-pyannote.audio>=2.1.1
-resemblyzer>=0.1.1
+
 
 # --- Utilities ---
 numpy>=1.26.0

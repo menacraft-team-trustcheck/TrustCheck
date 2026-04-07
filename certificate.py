@@ -156,6 +156,22 @@ def generate_certificate(
         _add_kv(pdf, "Verdict", geo_result.get("verdict", "N/A").replace("_", " ").title())
         pdf.ln(4)
 
+    # ── Axis ELA: Image Forensics Heatmap ─────────────────────
+    if heatmap_result:
+        _add_section(pdf, "FORENSIC ERROR LEVEL ANALYSIS (ELA)", (156, 39, 176))
+        _add_kv(pdf, "Method", heatmap_result.get("method", "ELA").upper())
+        _add_kv(pdf, "Avg Error Level", f"{heatmap_result.get('ela_mean', 0):.2f}")
+        _add_kv(pdf, "Max Error Level", f"{heatmap_result.get('ela_max', 0):.2f}")
+        
+        hotspots = heatmap_result.get("hotspots", [])
+        _add_kv(pdf, "Hotspots Detected", str(len(hotspots)))
+        
+        assessment = heatmap_result.get("overall_assessment", "")
+        if assessment:
+            pdf.set_font("Helvetica", "I", 9)
+            pdf.multi_cell(0, 6, f"Assessment: {assessment}")
+        pdf.ln(4)
+
     # ── Axis C: Source Credibility ───────────────────────────
     if credibility_result:
         _add_section(pdf, "AXIS C: SOURCE CREDIBILITY", (33, 150, 243))

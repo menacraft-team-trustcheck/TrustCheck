@@ -134,43 +134,59 @@ def analyze_video(
             "sha256": sha256,
         }
 
-    # Step 2: Score each frame
-    frame_scores = []
+    # Step 2: Score each frame (parallelized)
+    frame_count = len(frames)
+    frame_scores = [None] * frame_count
     suspicious_frames = []
 
+    # Prepare JPEG bytes for frames
+    frame_payloads = []  # list of (index, timestamp, jpeg_bytes)
     for i, (timestamp, frame) in enumerate(frames):
         if progress_callback:
-            progress_callback(i + 1, len(frames))
-
+            progress_callback(i + 1, frame_count)
         jpeg_bytes = frame_to_jpeg_bytes(frame)
-        if not jpeg_bytes:
-            frame_scores.append({
+        frame_payloads.append((i, timestamp, jpeg_bytes))
+
+    # Run authenticity checks in a small thread pool to parallelize network/model calls
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    max_workers = min(4, max(1, frame_count))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_index = {}
+        for idx, timestamp, jpeg in frame_payloads:
+            if not jpeg:
+                # Mark error immediately
+                frame_scores[idx] = {
+                    "timestamp": timestamp,
+                    "ai_score": 0.0,
+                    "verdict": "error",
+                    "frame_index": idx,
+                }
+                continue
+            fut = executor.submit(analyze_image_authenticity, jpeg)
+            future_to_index[fut] = (idx, timestamp, jpeg)
+
+        for fut in as_completed(future_to_index):
+            idx, timestamp, jpeg = future_to_index[fut]
+            try:
+                result = fut.result()
+            except Exception:
+                result = {"verdict": "error", "confidence": 0.0}
+
+            ai_score = result.get("confidence", 0.0)
+            if result.get("verdict") == "likely_authentic":
+                ai_score = 1.0 - ai_score
+
+            frame_entry = {
                 "timestamp": timestamp,
-                "ai_score": 0.0,
-                "verdict": "error",
-            })
-            continue
+                "ai_score": ai_score,
+                "verdict": result.get("verdict", "inconclusive"),
+                "frame_index": idx,
+            }
+            frame_scores[idx] = frame_entry
 
-        # Analyze via HF (same pipeline as image authenticity)
-        result = analyze_image_authenticity(jpeg_bytes)
-        ai_score = result.get("confidence", 0.0)
-        if result.get("verdict") == "likely_authentic":
-            ai_score = 1.0 - ai_score  # Invert: we want AI-likeness
-
-        frame_entry = {
-            "timestamp": timestamp,
-            "ai_score": ai_score,
-            "verdict": result.get("verdict", "inconclusive"),
-            "frame_index": i,
-        }
-        frame_scores.append(frame_entry)
-
-        if ai_score >= SUSPICIOUS_THRESHOLD:
-            # Store the JPEG bytes for display
-            suspicious_frames.append({
-                **frame_entry,
-                "image_bytes": jpeg_bytes,
-            })
+            if ai_score >= SUSPICIOUS_THRESHOLD:
+                suspicious_frames.append({**frame_entry, "image_bytes": jpeg})
 
     # Step 3: Generate timeline chart
     timeline_bytes = _generate_risk_timeline(frame_scores)

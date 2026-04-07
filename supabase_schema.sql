@@ -52,3 +52,19 @@ CREATE POLICY "service_role_all_reports" ON reports
 --   2. "reports"  — for generated PDF certificates
 --   3. "heatmaps" — for heatmap overlay images
 -- Set them to public if you want direct URL access from the frontend.
+CREATE TABLE IF NOT EXISTS public.analyses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_hash TEXT NOT NULL,
+    filename TEXT,
+    analysis_type TEXT,
+    results JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE IF NOT EXISTS public.reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_hash TEXT NOT NULL,
+    filename TEXT,
+    report_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);

@@ -117,7 +117,7 @@ def _call_openai_compatible(
         "temperature": temperature,
     }
 
-    response = requests.post(base_url, headers=headers, json=payload, timeout=120)
+    response = requests.post(base_url, headers=headers, json=payload, timeout=15)
     response.raise_for_status()
     return response.json()
 

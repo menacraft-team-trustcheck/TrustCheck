@@ -75,6 +75,8 @@ export interface AnalysisResult {
     emotionalAmplification: number
     sourceVerified: boolean
   }
+  taskTimings?: Record<string, number>
+  fileHash?: string
 }
 
 // ============================================================================
@@ -213,7 +215,7 @@ function Sidebar({ activeView, setActiveView, activeTab, onTabChange }: any) {
 
 function TopNav() {
   return (
-    <header className="h-16 glass-panel border-b border-glass-border flex items-center justify-between px-8 z-40 backdrop-blur-md">
+    <header className="h-16 glass-panel border-b border-glass-border flex items-center justify-between px-8 z-40 bg-background/80">
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2 bg-secondary/50 px-3 py-1.5 rounded-full border border-glass-border">
           <Search className="w-4 h-4 text-muted-foreground" />
@@ -250,7 +252,7 @@ function TopNav() {
 // UPLOAD ZONE
 // ============================================================================
 
-function UploadZone({ status, onFileUpload, uploadedFile, onReset, mediaType }: any) {
+function UploadZone({ status, onFileUpload, uploadedFile, onReset, mediaType, elapsedTime }: any) {
   const [isDragActive, setIsDragActive] = useState(false)
 
   const handleDrop = (e: any) => {
@@ -276,9 +278,6 @@ function UploadZone({ status, onFileUpload, uploadedFile, onReset, mediaType }: 
     >
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
         <div className="w-full h-full opacity-10 bg-[radial-gradient(circle_at_50%_50%,var(--primary)_0%,transparent_70%)]" />
-        <div className="absolute inset-0 grid grid-cols-12 gap-0.5 opacity-5">
-           {Array.from({length: 144}).map((_, i) => <div key={i} className="border border-glass-border" />)}
-        </div>
       </div>
 
       <AnimatePresence mode="wait">
@@ -338,7 +337,7 @@ function UploadZone({ status, onFileUpload, uploadedFile, onReset, mediaType }: 
                 />
               </div>
               <p className="text-center text-[11px] text-primary/80 uppercase tracking-[0.4em] font-bold animate-pulse mt-4">
-                {status === "uploading" ? "Transmitting..." : "Running Neural Forensics..."}
+                {status === "uploading" ? "Transmitting..." : `Running Neural Forensics... (${elapsedTime || 0}s)`}
               </p>
             </div>
           </motion.div>
@@ -431,6 +430,9 @@ export default function TrustCheckPage() {
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [claim, setClaim] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
+  const [fastMode, setFastMode] = useState(true)
+  const [elapsedTime, setElapsedTime] = useState(0)
+  const [certLoading, setCertLoading] = useState(false)
 
   const runAnalysis = useCallback(async () => {
     if (!uploadedFile) return
@@ -445,6 +447,7 @@ export default function TrustCheckPage() {
         endpoint = "/analyze/image"
         formData.append("image", uploadedFile)
         formData.append("claim", claim)
+        if (fastMode) formData.append("fast", "true")
       } else if (activeTab === "audio") {
         endpoint = "/analyze/voice"
         formData.append("audio", uploadedFile)
@@ -463,7 +466,7 @@ export default function TrustCheckPage() {
         riskLevel: data.verdict === "likely_ai_generated" ? "CRITICAL" : 
                    data.verdict === "suspicious" ? "HIGH" : 
                    data.verdict === "inconclusive" ? "MODERATE" : "LOW",
-        reasoning: data.interpretation || data.reasoning || "Synthesis complete. Multi-axis detection detected risk signals consistent with neural synthesis.",
+        reasoning: data.reasoning || data.interpretation || "Synthesis complete. Multi-axis detection detected risk signals consistent with neural synthesis.",
         visualForensics: {
           elaMax: Math.round((data.heatmap?.ela_max || 0) * 100),
           manipulationRegions: data.heatmap?.hotspots?.length || 0,
@@ -478,18 +481,21 @@ export default function TrustCheckPage() {
           shimmer: data.features.shimmer || 0
         } : undefined,
         exifData: {
-          camera: data.exif?.Model || "SONY A7R_III (Digital Signature)",
-          focalLength: "35mm",
-          iso: "100",
-          flash: "Off",
-          gps: "Encrypted",
-          timestamp: "2024-03-24 14:02:11"
+          camera: [data.geolocation?.camera_info?.make, data.geolocation?.camera_info?.model].filter(Boolean).join(" ") || "Unknown",
+          focalLength: data.geolocation?.camera_info?.focal_length ? `${data.geolocation.camera_info.focal_length}mm` : "Unknown",
+          iso: data.geolocation?.camera_info?.iso || "Unknown",
+          flash: data.geolocation?.camera_info?.flash || "Unknown",
+          gps: data.geolocation?.has_gps ? "Present" : "Stripped/None",
+          timestamp: data.geolocation?.camera_info?.datetime || "Unknown",
+          software: data.geolocation?.camera_info?.software || "None"
         },
         credibility: {
           domainScore: data.credibility?.domain_trust * 100 || 92,
           emotionalAmplification: 15,
           sourceVerified: true
-        }
+        },
+        taskTimings: data.taskTimings,
+        fileHash: data.sha256
       }
 
       setResult(mapped)
@@ -498,22 +504,85 @@ export default function TrustCheckPage() {
       setAnalysisStatus("idle")
       alert("Encryption error or endpoint unreachable.")
     }
-  }, [uploadedFile, activeTab, claim])
+  }, [uploadedFile, activeTab, claim, fastMode])
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout
+    if (analysisStatus === "analyzing") {
+      setElapsedTime(0)
+      interval = setInterval(() => setElapsedTime(p => p + 1), 1000)
+    } else {
+      setElapsedTime(0)
+    }
+    return () => clearInterval(interval)
+  }, [analysisStatus])
+
+  useEffect(() => {
+    if (analysisStatus === "uploading" && uploadedFile) {
+      const timer = setTimeout(() => {
+        runAnalysis()
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [analysisStatus, uploadedFile, runAnalysis])
 
   const handleFileUpload = (file: File) => {
     setUploadedFile(file)
     setAnalysisStatus("uploading")
-    setTimeout(() => runAnalysis(), 1000)
+  }
+
+  // Toggle UI element for fast mode
+  const FastToggle = () => (
+    <label className="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={fastMode} onChange={e => setFastMode(e.target.checked)} />
+      <span className="text-xs text-muted-foreground">Fast analysis (authenticity + heatmap)</span>
+    </label>
+  )
+
+  const handleDownloadCertificate = async () => {
+    if (!uploadedFile) return
+    setCertLoading(true)
+    
+    try {
+      const formData = new FormData()
+      formData.append('image', uploadedFile)
+      formData.append('claim', claim)
+      
+      const response = await fetch('/report/certificate', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `TrustCheck_Forensic_Cert_${Date.now()}.pdf`
+        document.body.appendChild(a)
+        a.click()
+        window.URL.revokeObjectURL(url)
+      } else {
+        alert("Server failed to generate certificate.")
+      }
+    } catch (err) {
+      console.error("Download failed:", err)
+      alert("Network error: Could not download certificate.")
+    } finally {
+      setCertLoading(false)
+    }
   }
 
   const handleReset = () => {
     setUploadedFile(null)
     setAnalysisStatus("idle")
     setResult(null)
+    setCertLoading(false)
+    setElapsedTime(0)
   }
 
   return (
-    <div className="flex h-screen bg-background mesh-gradient overflow-hidden font-sans text-foreground selection:bg-primary/30">
+    <div className="flex h-screen bg-background overflow-hidden font-sans text-foreground selection:bg-primary/30">
       <Sidebar 
         activeView={activeView} 
         setActiveView={setActiveView} 
@@ -550,7 +619,12 @@ export default function TrustCheckPage() {
                   onFileUpload={handleFileUpload} 
                   uploadedFile={uploadedFile} 
                   mediaType={activeTab} 
+                  elapsedTime={elapsedTime}
                 />
+
+                <div className="px-6 pt-2">
+                  <FastToggle />
+                </div>
 
                 {analysisStatus === "complete" && result && (
                   <motion.div 
@@ -564,26 +638,58 @@ export default function TrustCheckPage() {
                        <p className="text-sm leading-relaxed text-muted-foreground first-letter:text-3xl first-letter:font-bold first-letter:text-primary first-letter:mr-1 first-letter:float-left font-sans">
                          {result.reasoning}
                        </p>
+                       { /* Show task timings when available */ }
+                       {result.taskTimings && (
+                         <div className="mt-4 text-xs text-muted-foreground">
+                           <h4 className="text-sm font-bold mb-1">Task timings</h4>
+                           <ul className="space-y-1">
+                             {Object.entries(result.taskTimings).map(([k,v]) => (
+                               <li key={k} className="flex justify-between">
+                                 <span className="capitalize">{k.replace('_',' ')}</span>
+                                 <span className="font-mono">{v}s</span>
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
                        <div className="mt-8 flex gap-4">
-                          <Button className="flex-1 py-4 text-xs font-bold uppercase tracking-widest" onClick={() => window.print()}>
-                             <Download className="w-4 h-4" /> Download Certificate
+                          <Button className="flex-1 py-4 text-xs font-bold uppercase tracking-widest" onClick={handleDownloadCertificate} disabled={certLoading}>
+                             {certLoading ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} 
+                             {certLoading ? "Generating..." : "Download Certificate"}
                           </Button>
-                          <Button variant="outline" className="flex-1 py-4 text-xs font-bold uppercase tracking-widest">
+                          <Button variant="outline" className="flex-1 py-4 text-xs font-bold uppercase tracking-widest" onClick={() => alert(`MD5/SHA-256 Hash Evidence:\n${result.fileHash || "Not available"}`)}>
                              <FileText className="w-4 h-4" /> View MD5 Hash
                           </Button>
                        </div>
                     </WidgetWrapper>
 
-                    {result.visualForensics && (
+                    {result.visualForensics && result.visualForensics.image ? (
+                      <WidgetWrapper title="ELA Heatmap" icon={Eye} className="lg:col-span-1">
+                        <div className="space-y-6">
+                           <div className="h-36 flex items-center justify-center rounded-lg border border-glass-border overflow-hidden bg-secondary/30 relative">
+                              <img src={`data:image/png;base64,${result.visualForensics.image}`} className="object-cover w-full h-full opacity-80 mix-blend-screen" alt="ELA Heatmap" />
+                              <div className="absolute inset-0 bg-gradient-to-t from-background/80 to-transparent pointer-events-none" />
+                           </div>
+                           <div className="grid grid-cols-2 gap-4">
+                              <div className="p-3 rounded-lg bg-secondary/30 border border-glass-border">
+                                 <p className="text-[9px] uppercase tracking-widest text-muted-foreground">Max ELA</p>
+                                 <p className="text-lg font-mono font-bold text-critical">{result.visualForensics.elaMax}%</p>
+                              </div>
+                              <div className="p-3 rounded-lg bg-secondary/30 border border-glass-border">
+                                 <p className="text-[9px] uppercase tracking-widest text-muted-foreground">Hotspots</p>
+                                 <p className="text-lg font-mono font-bold text-accent">{result.visualForensics.manipulationRegions}</p>
+                              </div>
+                           </div>
+                        </div>
+                      </WidgetWrapper>
+                    ) : result.audioForensics && (
                       <WidgetWrapper title="Acoustic Signal" icon={Activity} className="lg:col-span-1">
                         <div className="space-y-6">
                            <div className="h-24 flex items-end gap-1 px-2">
                               {Array.from({length: 24}).map((_, i) => (
-                                <motion.div 
+                                <div 
                                   key={i}
-                                  initial={{ height: "10%" }}
-                                  animate={{ height: `${Math.random() * 80 + 20}%` }}
-                                  transition={{ duration: 0.5, repeat: Infinity, repeatType: "mirror", delay: i * 0.05 }}
+                                  style={{ height: `${Math.random() * 80 + 20}%` }}
                                   className="flex-1 bg-primary/40 rounded-t-sm"
                                 />
                               ))}
@@ -616,7 +722,7 @@ export default function TrustCheckPage() {
                              <ShieldCheck className="w-4 h-4 text-safe" />
                              <span className="text-[10px] font-mono text-safe uppercase font-bold">Encrypted Provenance (Signed)</span>
                           </div>
-                          <span className="text-[10px] font-mono text-muted-foreground">SHA256: 8e2...f9a</span>
+                          <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[120px]">SHA256: {result.fileHash ? `${result.fileHash.substring(0, 10)}...` : "Encrypted"}</span>
                        </div>
                     </WidgetWrapper>
                   </motion.div>
@@ -639,6 +745,6 @@ export default function TrustCheckPage() {
           </AnimatePresence>
         </main>
       </div>
-    </motion.div>
+    </div>
   )
 }
