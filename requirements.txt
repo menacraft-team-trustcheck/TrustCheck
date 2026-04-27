@@ -38,3 +38,13 @@ numpy>=1.26.0
 python-dotenv>=1.0.0
 supabase>=2.4.0
 httpx>=0.27.0
+
+# --- Latent Manifold AI Image Detector (Math-based, FREE, CPU-safe) ---
+# PyTorch CPU-only build (~230 MB vs ~2 GB for CUDA). If you have an NVIDIA
+# GPU, replace with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+torch>=2.1.0
+torchvision>=0.16.0
+# HuggingFace Diffusers — loads the Stable Diffusion VAE (stabilityai/sd-vae-ft-mse)
+diffusers>=0.26.0
+transformers>=4.37.0
+accelerate>=0.27.0
