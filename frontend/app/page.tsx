@@ -30,6 +30,27 @@ import {
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 
+const DEFAULT_API_BASE = "http://127.0.0.1:8000"
+
+function getApiBaseUrl() {
+  const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim()
+  return configured ? configured.replace(/\/$/, "") : DEFAULT_API_BASE
+}
+
+function apiUrl(path: string) {
+  return `${getApiBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`
+}
+
+function getSourceNameFromUrl(value: string) {
+  try {
+    if (!value) return ""
+    const parsed = new URL(value)
+    return parsed.hostname.replace(/^www\./, "")
+  } catch {
+    return ""
+  }
+}
+
 // ============================================================================
 // TYPES & INTERFACES
 // ============================================================================
@@ -447,6 +468,8 @@ export default function TrustCheckPage() {
         endpoint = "/analyze/image"
         formData.append("image", uploadedFile)
         formData.append("claim", claim)
+        formData.append("source_url", sourceUrl)
+        formData.append("source_name", getSourceNameFromUrl(sourceUrl))
         if (fastMode) formData.append("fast", "true")
       } else if (activeTab === "audio") {
         endpoint = "/analyze/voice"
@@ -457,7 +480,7 @@ export default function TrustCheckPage() {
         formData.append("interval_sec", "2.0")
       }
 
-      const response = await fetch(endpoint, { method: "POST", body: formData })
+      const response = await fetch(apiUrl(endpoint), { method: "POST", body: formData })
       if (!response.ok) throw new Error("Hardware acceleration failure")
       const data = await response.json()
 
@@ -547,8 +570,10 @@ export default function TrustCheckPage() {
       const formData = new FormData()
       formData.append('image', uploadedFile)
       formData.append('claim', claim)
+      formData.append('source_url', sourceUrl)
+      formData.append('source_name', getSourceNameFromUrl(sourceUrl))
       
-      const response = await fetch('/report/certificate', {
+      const response = await fetch(apiUrl('/report/certificate'), {
         method: 'POST',
         body: formData,
       })

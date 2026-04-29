@@ -31,6 +31,7 @@ import os
 import logging
 import base64
 import hashlib
+import math
 import datetime
 import asyncio
 import traceback
@@ -125,11 +126,24 @@ def _cache_get(key: str):
 def _cache_set(key: str, value: dict):
     _analysis_cache[key] = (datetime.datetime.now(), value)
 
+
+def _json_safe(value):
+    """Recursively convert NaN/Infinity values into JSON-safe None values."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    return value
+
 # CORS — allow your frontend (Figma export / local dev) to call the API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Tighten in production
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -580,7 +594,7 @@ async def endpoint_full_image(
         results["reasoning"] = top_level.get("narrative", "Forensic synthesis complete. No specific narrative provided.")
         results["interpretation"] = results["reasoning"] # Keep alias for backward compatibility
 
-        return results
+        return _json_safe(results)
     except Exception as e:
         logger.exception("Catastrophic image analysis failure")
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -609,7 +623,7 @@ async def endpoint_voice(audio: UploadFile = File(...)):
         except Exception as e:
             logger.error(f"Persistence failed: {e}")
 
-        return result
+        return _json_safe(result)
     except Exception as e:
         logger.exception("Voice analysis failure")
         return JSONResponse(status_code=500, content={"error": f"Voice Analysis Failure: {str(e)}"})
@@ -661,7 +675,7 @@ async def endpoint_video(
     except Exception:
         pass
 
-    return video_result
+    return _json_safe(video_result)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -700,7 +714,7 @@ async def endpoint_batch(
     for r in results:
         save_analysis(r["sha256"], r["filename"], "batch", r)
 
-    return {"results": results, "total": len(results)}
+    return _json_safe({"results": results, "total": len(results)})
 
 
 # ═══════════════════════════════════════════════════════════════
