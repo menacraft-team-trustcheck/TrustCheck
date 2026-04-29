@@ -170,21 +170,26 @@ def _fuse_results(
     sha256: str,
 ) -> Dict[str, Any]:
     """
-    Fuse Vision LLM (60%) and VAE math (40%) results into a single verdict.
+    Fuse Vision LLM and Math Detector (HF Classifier + VAE) results.
 
-    Fusion strategy:
-      • The 'math' block already contains a pre-fused result from
-        analyze_math_combined() (HF Classifier 60% + VAE 40%).
-      • We fuse THAT math result (35% weight) with the Vision LLM (65%),
-        giving us a three-signal final verdict:
-          Vision LLM     65%
-          HF Classifier  ~21%  (35% × 60%)
-          VAE Manifold   ~14%  (35% × 40%)
-      • If math block is unavailable, Vision LLM carries 100%.
+    DYNAMIC WEIGHT STRATEGY:
+    ─────────────────────────────────────────────────────────────────────
+    The HF Classifier (Organika/sdxl-detector) is a specialist model trained
+    specifically for AI image detection with ~99% accuracy. The Vision LLM
+    (llama-3.2-11b-vision) is a general-purpose model and can be wrong on
+    images that look "clean" or "professional" (common false positives).
+
+    When the HF classifier gives a DECISIVE result (hf_ai_score < 0.15 or
+    hf_ai_score > 0.85), it signals very high confidence. In this case we
+    TRUST THE SPECIALIST MORE than the generalist LLM:
+
+        HF decisive (very confident): Math 65%  / Vision LLM 35%
+        HF ambiguous (0.15–0.85):     Vision LLM 65% / Math 35%  (default)
+
+    This prevents the Vision LLM from overriding a highly confident
+    specialized detector — which caused real photos to be misclassified.
+    ─────────────────────────────────────────────────────────────────────
     """
-    LLM_WEIGHT  = 0.65
-    MATH_WEIGHT = 0.35
-
     llm_risk = _verdict_to_risk(llm.get("verdict", "inconclusive"), float(llm.get("confidence", 0.5)))
 
     # The math block is from analyze_math_combined() — read its fused verdict
@@ -192,9 +197,25 @@ def _fuse_results(
     math_confidence = (vae or {}).get("fused_confidence") or (vae or {}).get("vae_confidence") or 0.5
 
     if vae is not None and math_verdict and math_verdict != "inconclusive":
-        math_risk  = _verdict_to_risk(math_verdict, float(math_confidence))
+        math_risk = _verdict_to_risk(math_verdict, float(math_confidence))
+
+        # ── Dynamic weight: specialist vs generalist ───────────────────
+        hf_ai_score = vae.get("hf_ai_score")
+        hf_is_decisive = (
+            hf_ai_score is not None
+            and (hf_ai_score < 0.15 or hf_ai_score > 0.85)
+        )
+        if hf_is_decisive:
+            # HF specialist is very confident → trust it more than the LLM
+            LLM_WEIGHT, MATH_WEIGHT = 0.35, 0.65
+            weight_note = "math_detector(65%) + vision_llm(35%) [HF decisive]"
+        else:
+            # HF ambiguous → standard weighting
+            LLM_WEIGHT, MATH_WEIGHT = 0.65, 0.35
+            weight_note = "vision_llm(65%) + math_detector(35%)"
+
         fused_risk = LLM_WEIGHT * llm_risk + MATH_WEIGHT * math_risk
-        method_note = f"vision_llm(65%) + math_detector(35%) [{vae.get('method', 'combined')}]"
+        method_note = f"{weight_note} [{vae.get('method', 'combined')}]"
     else:
         # Math unavailable or inconclusive → Vision LLM only
         fused_risk  = llm_risk
@@ -233,6 +254,7 @@ def _fuse_results(
         ) if vae and math_verdict != "inconclusive" else None,
         "fused_risk_score": round(fused_risk, 3),
     }
+
 
 
 def _parse_vision_response(response: str, sha256: str) -> Dict[str, Any] | None:

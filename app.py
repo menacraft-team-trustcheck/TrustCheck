@@ -44,12 +44,22 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Load .env file for API keys
-load_dotenv()
+# Load .env file for API keys — override=True ensures that even if the OS
+# environment already has stale/empty values (e.g. from uvicorn --reload
+# spawning a new worker), the .env file values always take precedence.
+load_dotenv(override=True)
 
 # ── Configure logging ────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("trustcheck.api")
+
+# ── Startup key verification (masked) ───────────────────────
+_KEY_NAMES = ["GROQ_API_KEY", "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "HF_API_KEY", "GOOGLE_API_KEY"]
+for _k in _KEY_NAMES:
+    _v = os.environ.get(_k, "")
+    _status = f"{_v[:8]}..." if _v else "MISSING ⚠"
+    logging.getLogger("trustcheck.api").info(f"[ENV] {_k}: {_status}")
+
 
 # ── Module imports ───────────────────────────────────────────
 from llm_router import check_provider_status, PROVIDERS, get_fallback_logs, route_reasoning
@@ -150,7 +160,8 @@ app.add_middleware(
 
 # ── Serve frontend static files ──────────────────────────────
 # We now serve the built Next.js export from the 'out' directory
-FRONTEND_SOURCE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+# FALLBACK: Using 'frontend_v1' which contains the working static UI
+FRONTEND_SOURCE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend_v1")
 FRONTEND_BUILD_DIR = os.path.join(FRONTEND_SOURCE_DIR, "out")
 
 # Use build dir if it exists (standard Next.js export), else fallback to source for legacy compatibility

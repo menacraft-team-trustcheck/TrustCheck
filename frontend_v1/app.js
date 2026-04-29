@@ -291,10 +291,10 @@ function renderImageResults(data, container) {
 
   // Risk level styling
   const riskColors = {
-    CRITICAL: { bg: "rgba(255,23,68,0.15)",   border: "#FF1744", text: "#FF1744",  icon: "🚨" },
-    HIGH:     { bg: "rgba(255,145,0,0.15)",   border: "#FF9100", text: "#FF9100",  icon: "⚠️" },
-    MEDIUM:   { bg: "rgba(255,214,0,0.12)",   border: "#FFD600", text: "#FFD600",  icon: "🔶" },
-    LOW:      { bg: "rgba(0,200,83,0.12)",    border: "#00C853", text: "#00C853",  icon: "✅" },
+    CRITICAL: { bg: "rgba(255,23,68,0.15)", border: "#FF1744", text: "#FF1744", icon: "🚨" },
+    HIGH: { bg: "rgba(255,145,0,0.15)", border: "#FF9100", text: "#FF9100", icon: "⚠️" },
+    MEDIUM: { bg: "rgba(255,214,0,0.12)", border: "#FFD600", text: "#FFD600", icon: "🔶" },
+    LOW: { bg: "rgba(0,200,83,0.12)", border: "#00C853", text: "#00C853", icon: "✅" },
   };
   const riskLevel = syn.risk_level || "MEDIUM";
   const rc = riskColors[riskLevel] || riskColors.MEDIUM;
@@ -375,11 +375,19 @@ function renderImageResults(data, container) {
 
     <!-- Authenticity Detail -->
     ${renderDetailSection("🔬 Axis A: Content Authenticity", auth.verdict, `
-      <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;">${auth.details || "No details available."}</p>
+      <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;">${(auth.details || "No details available.").split(" | Math:")[0]}</p>
       <div style="margin-top:0.75rem;">
         <span class="verdict-pill ${verdictClass(auth.verdict)}">${verdictEmoji(auth.verdict)} ${formatVerdict(auth.verdict)}</span>
         <span style="margin-left:0.5rem;font-size:0.75rem;color:var(--text-muted);">Model: ${auth.model_used || "N/A"}</span>
       </div>
+      ${auth.math_analysis && auth.math_analysis.hf_ai_score != null ? `
+      <div style="margin-top:0.6rem; padding:0.5rem 0.75rem; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid ${auth.math_analysis.hf_verdict === 'likely_authentic' ? '#00C853' : auth.math_analysis.hf_verdict === 'likely_ai_generated' ? '#FF1744' : '#FF9100'}; font-size:0.78rem; color:var(--text-secondary);">
+        🔢 <strong>HF AI Detector:</strong> ${(auth.math_analysis.hf_ai_score * 100).toFixed(1)}% AI probability →
+        <strong style="color:${auth.math_analysis.hf_verdict === 'likely_authentic' ? '#00C853' : auth.math_analysis.hf_verdict === 'likely_ai_generated' ? '#FF1744' : '#FF9100'};">
+          ${formatVerdict(auth.math_analysis.hf_verdict)}
+        </strong>
+        ${auth.math_analysis.kl_score != null ? `&nbsp;· KL=${auth.math_analysis.kl_score.toFixed(2)} · PSNR=${auth.math_analysis.psnr_score ? auth.math_analysis.psnr_score.toFixed(1)+'dB' : 'N/A'}` : ''}
+      </div>` : ''}
     `, true)}
 
     <!-- Heatmap -->
@@ -423,8 +431,8 @@ function renderImageResults(data, container) {
       ${(geo.forensic_signals?.length) ? `
         <div style="margin-top:0.75rem;">
           ${geo.forensic_signals.map(s =>
-            `<div style="font-size:0.8rem; padding:6px 10px; margin-bottom:4px; border-radius:6px; background:rgba(255,145,0,0.08); border-left:3px solid #FF9100; color: var(--text-primary);">⚠️ ${s}</div>`
-          ).join("")}
+    `<div style="font-size:0.8rem; padding:6px 10px; margin-bottom:4px; border-radius:6px; background:rgba(255,145,0,0.08); border-left:3px solid #FF9100; color: var(--text-primary);">⚠️ ${s}</div>`
+  ).join("")}
         </div>
       ` : ""}
 
@@ -433,16 +441,16 @@ function renderImageResults(data, container) {
           <div style="font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; color:var(--text-muted); margin-bottom:0.4rem;">📷 EXIF Camera Profile</div>
           <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:4px;">
             ${[
-              ["Make / Model", (geo.camera_info.make || "") + " " + (geo.camera_info.model || "")],
-              ["Captured",     geo.camera_info.datetime],
-              ["ISO",          geo.camera_info.iso],
-              ["F-Number",     geo.camera_info.f_number ? "f/" + geo.camera_info.f_number : null],
-              ["Exposure",     geo.camera_info.exposure_time],
-              ["Focal Length", geo.camera_info.focal_length ? geo.camera_info.focal_length + "mm" : null],
-              ["Flash",        geo.camera_info.flash],
-              ["Software",     geo.camera_info.software],
-              ["Resolution",   geo.camera_info.resolution],
-            ].filter(([,v]) => v && String(v).trim()).map(([k,v]) => `
+        ["Make / Model", (geo.camera_info.make || "") + " " + (geo.camera_info.model || "")],
+        ["Captured", geo.camera_info.datetime],
+        ["ISO", geo.camera_info.iso],
+        ["F-Number", geo.camera_info.f_number ? "f/" + geo.camera_info.f_number : null],
+        ["Exposure", geo.camera_info.exposure_time],
+        ["Focal Length", geo.camera_info.focal_length ? geo.camera_info.focal_length + "mm" : null],
+        ["Flash", geo.camera_info.flash],
+        ["Software", geo.camera_info.software],
+        ["Resolution", geo.camera_info.resolution],
+      ].filter(([, v]) => v && String(v).trim()).map(([k, v]) => `
               <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:6px 10px;">
                 <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">${k}</div>
                 <div style="font-size:0.8rem; color:var(--text-primary); font-weight:600; margin-top:2px;">${v}</div>
@@ -692,9 +700,9 @@ function renderBatchResults(data, container) {
   container.innerHTML = `
     <div class="results-header">📊 Batch Results — ${data.total} Images</div>
     ${data.results.map((r) => {
-      const auth = r.authenticity || {};
-      const cls = verdictClass(auth.verdict);
-      return `
+    const auth = r.authenticity || {};
+    const cls = verdictClass(auth.verdict);
+    return `
         <div class="batch-item">
           <div class="batch-item__name">
             ${verdictEmoji(auth.verdict)}
@@ -706,7 +714,7 @@ function renderBatchResults(data, container) {
           </div>
         </div>
       `;
-    }).join("")}
+  }).join("")}
   `;
 }
 
@@ -760,7 +768,7 @@ $("#btn-analyze-audio").addEventListener("click", async () => {
 function renderAudioResults(data, container) {
   const scorePct = Math.round((data.ai_score || 0) * 100);
   const colorClass = scoreGradientClass(1 - (data.ai_score || 0));
-  
+
   container.innerHTML = `
     <div class="results-header">🔊 Voice Forensic Results</div>
 
@@ -806,7 +814,7 @@ function renderAudioResults(data, container) {
       <div class="detail-section__body">
         <div class="detail-section__content">
           <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
-            ${Object.entries(data.features).filter(([k,v]) => v !== null && typeof v !== 'object').map(([k,v]) => `
+            ${Object.entries(data.features).filter(([k, v]) => v !== null && typeof v !== 'object').map(([k, v]) => `
               <div style="background:rgba(255,255,255,0.03); padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
                 <div style="font-size:0.65rem; color:var(--text-muted); text-transform:uppercase;">${k.replace(/_/g, ' ')}</div>
                 <div style="font-size:0.9rem; font-weight:700; color:var(--text-primary);">${typeof v === 'number' ? v.toFixed(3) : v}</div>
