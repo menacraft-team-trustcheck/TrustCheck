@@ -39,15 +39,18 @@ logger = logging.getLogger("trustcheck.authenticity")
 # Lazy-import the VAE detector so the app starts even if torch/diffusers are
 # not yet installed (graceful degradation).
 def _try_vae_analysis(image_bytes: bytes) -> Dict[str, Any] | None:
-    """Run the Latent Manifold VAE detector. Returns None if unavailable."""
+    """
+    Run the combined math-based AI detector (HF Classifier + VAE Manifold).
+    Returns None if unavailable (torch/diffusers not installed).
+    """
     try:
-        from latent_manifold_detector import analyze_with_vae
-        return analyze_with_vae(image_bytes)
+        from latent_manifold_detector import analyze_math_combined
+        return analyze_math_combined(image_bytes)
     except ImportError:
-        logger.warning("[Authenticity] VAE detector unavailable — torch/diffusers not installed.")
+        logger.warning("[Authenticity] Math detector unavailable — torch/diffusers not installed.")
         return None
     except Exception as e:
-        logger.warning(f"[Authenticity] VAE detector failed: {e}")
+        logger.warning(f"[Authenticity] Math detector failed: {e}")
         return None
 
 
@@ -170,23 +173,31 @@ def _fuse_results(
     Fuse Vision LLM (60%) and VAE math (40%) results into a single verdict.
 
     Fusion strategy:
-      • Convert each method's verdict+confidence into a 0-1 risk score.
-      • Compute weighted average: risk = 0.6×LLM_risk + 0.4×VAE_risk
-      • Map risk back to verdict + confidence.
-      • If VAE is unavailable, use LLM result directly (no penalty).
+      • The 'math' block already contains a pre-fused result from
+        analyze_math_combined() (HF Classifier 60% + VAE 40%).
+      • We fuse THAT math result (35% weight) with the Vision LLM (65%),
+        giving us a three-signal final verdict:
+          Vision LLM     65%
+          HF Classifier  ~21%  (35% × 60%)
+          VAE Manifold   ~14%  (35% × 40%)
+      • If math block is unavailable, Vision LLM carries 100%.
     """
-    LLM_WEIGHT = 0.60
-    VAE_WEIGHT  = 0.40
+    LLM_WEIGHT  = 0.65
+    MATH_WEIGHT = 0.35
 
     llm_risk = _verdict_to_risk(llm.get("verdict", "inconclusive"), float(llm.get("confidence", 0.5)))
 
-    if vae is not None and vae.get("vae_verdict") != "inconclusive":
-        vae_risk = _verdict_to_risk(vae["vae_verdict"], float(vae.get("vae_confidence", 0.5)))
-        fused_risk = LLM_WEIGHT * llm_risk + VAE_WEIGHT * vae_risk
-        method_note = "vision_llm + latent_manifold_vae"
+    # The math block is from analyze_math_combined() — read its fused verdict
+    math_verdict    = (vae or {}).get("fused_verdict")   or (vae or {}).get("vae_verdict")
+    math_confidence = (vae or {}).get("fused_confidence") or (vae or {}).get("vae_confidence") or 0.5
+
+    if vae is not None and math_verdict and math_verdict != "inconclusive":
+        math_risk  = _verdict_to_risk(math_verdict, float(math_confidence))
+        fused_risk = LLM_WEIGHT * llm_risk + MATH_WEIGHT * math_risk
+        method_note = f"vision_llm(65%) + math_detector(35%) [{vae.get('method', 'combined')}]"
     else:
-        # VAE unavailable or inconclusive → fall back to LLM only
-        fused_risk = llm_risk
+        # Math unavailable or inconclusive → Vision LLM only
+        fused_risk  = llm_risk
         method_note = llm.get("model_used", "vision_llm")
 
     # Map fused risk score → final verdict + confidence
@@ -202,24 +213,24 @@ def _fuse_results(
 
     # Build detail string
     llm_details = llm.get("details", "")
-    vae_details = (
-        f" | VAE Math: MSE={vae.get('mse_score')}, PSNR={vae.get('psnr_score')} dB — {vae.get('vae_verdict')}"
-        if vae else " | VAE Math: unavailable"
+    math_details = (
+        f" | Math: HF={vae.get('hf_ai_score')} MSE={vae.get('mse_score')} PSNR={vae.get('psnr_score')} dB → {math_verdict}"
+        if vae else " | Math Detector: unavailable"
     )
 
     return {
         "verdict": final_verdict,
         "confidence": final_confidence,
-        "details": llm_details + vae_details,
+        "details": llm_details + math_details,
         "model_used": method_note,
         "sha256": sha256,
         "indicators": llm.get("indicators", []),
         # Expose raw sub-results for transparency
-        "vae_analysis": vae if vae else {"status": "unavailable"},
+        "math_analysis": vae if vae else {"status": "unavailable"},
         "llm_risk_score": round(llm_risk, 3),
-        "vae_risk_score": round(
-            _verdict_to_risk(vae["vae_verdict"], float(vae.get("vae_confidence", 0.5))), 3
-        ) if vae and vae.get("vae_verdict") != "inconclusive" else None,
+        "math_risk_score": round(
+            _verdict_to_risk(math_verdict, float(math_confidence)), 3
+        ) if vae and math_verdict != "inconclusive" else None,
         "fused_risk_score": round(fused_risk, 3),
     }
 
