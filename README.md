@@ -10,7 +10,10 @@ TrustCheck doesn't just ask if something is "real." It investigates the content 
 
 ### 1. Visual Forensics (Axis A)
 - **Neural Discovery**: Leverages LLaMA 3.2 Vision and Qwen2.5-VL to detect AI generation fingerprints, lighting inconsistencies, and neural artifacts.
-- **Local ELA**: Replaced third-party vision heatmaps with a **local Error Level Analysis (ELA)** module. This analyzes JPEG re-save artifacts to identify exactly which regions of an image have been digitally manipulated.
+- **Latent Manifold Reconstruction (Math)**: A dual-method mathematical detector that analyzes the "neural footprint" of images:
+  - **Method 1: HF Classifier**: State-of-the-art inference (Organika/sdxl-detector) with ~99% accuracy across all AI generators.
+  - **Method 2: VAE Manifold Analysis**: Uses a Variational Autoencoder to measure PSNR/MSE and **KL Divergence**. AI images lie perfectly on the generative latent prior, while real photos deviate significantly.
+- **Local ELA**: Analyzes JPEG re-save artifacts to identify exactly which regions of an image have been digitally manipulated.
 
 ### 2. Acoustic Forensics (Axis B)
 - **Neural Voice Detection**: Analyzes audio for "Robotic Perfection." 
@@ -36,8 +39,8 @@ The platform features a **Chief Investigator** reasoning layer (LLaMA 3.3 70B). 
 
 ## 🛠️ Technical Stack
 - **Backend**: Python (FastAPI), ThreadPoolExecutor (Parallel analysis).
-- **ML/LLM**: Groq (LLaMA Series), OpenRouter (Vision Models), DeepSeek.
-- **Digital Signal Processing**: Librosa (Acoustics), OpenCV (Image ELA), piexif.
+- **ML/LLM**: Groq (LLaMA Series), OpenRouter (Vision Models), DeepSeek, **HuggingFace Hub (Classifiers)**.
+- **Forensics/Math**: **PyTorch (VAE Latent Manifold)**, Librosa (Acoustics), OpenCV (Image ELA), piexif.
 - **Database**: Supabase (Forensic history + JSONB).
 - **Frontend**: **Next.js 15+ "Investigation Room" Dashboard**. A high-performance, reactive React frontend using Radix UI and Tailwind CSS for a premium "Cyber-Forensic" aesthetic. Built with static-export for seamless FastAPI integration.
 
